@@ -23,7 +23,7 @@ class SeaTrial:
             self.prop_curve_dict = {'RPM': [], 'power': []}
         elif n_eng == 2:
             n_headerlines = 14
-            self.prop_curve_dict = {'port RPM': [], 'port power': [], 'starboard RPM': [], 'starboard power': []}
+            self.prop_curve_dict = {'engines':{'port':{'RPM':[], 'power': []}, 'starboard':{'RPM': [], 'power': []}}}
         else:
             raise ValueError('n_eng must be 1 or 2')
         if port > n_eng:
@@ -174,9 +174,9 @@ class SeaTrial:
                 self.prop_curve_dict['RPM'].append(np.average(self.rpm[start_ind:end_ind]))
                 self.prop_curve_dict['power'].append(np.average(self.power[start_ind:end_ind]))
             elif self.n_eng == 2:
-                self.prop_curve_dict['port RPM'].append(np.average(self.rpm[start_ind:end_ind]))
-                self.prop_curve_dict['port power'].append(np.average(self.power[start_ind:end_ind]))
-                self.prop_curve_dict['starboard RPM'].append(np.average(self.rpm2[start_ind:end_ind]))
-                self.prop_curve_dict['starboard power'].append(np.average(self.power2[start_ind:end_ind]))
+                self.prop_curve_dict['engines']['port']['RPM'].append(np.average(self.rpm[start_ind:end_ind]))
+                self.prop_curve_dict['engines']['port']['power'].append(np.average(self.power[start_ind:end_ind]))
+                self.prop_curve_dict['engines']['starboard']['RPM'].append(np.average(self.rpm2[start_ind:end_ind]))
+                self.prop_curve_dict['engines']['starboard']['power'].append(np.average(self.power2[start_ind:end_ind]))
         self.start_times = start_times
         self.end_times = end_times

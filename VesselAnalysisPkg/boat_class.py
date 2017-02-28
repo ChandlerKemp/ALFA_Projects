@@ -1,10 +1,10 @@
 import numpy as np
-#import analysis_functions
+from VesselAnalysisPkg import analysis_functions
 import csv
 import datetime
-#import plotting_functions
+from VesselAnalysisPkg import plotting_functions
 import matplotlib.pyplot as plt
-#import data_tools
+from VesselAnalysisPkg import data_tools
 
 # Constants:
 RHO_FUEL = 3179  # estimated fuel density gram/gallon
@@ -50,7 +50,7 @@ class Boat:
             trials = self.sea_trials.keys()
         # prop_curve indicates that the BSFC should be calculated based on manufacturer data, rather than measured data
         ind1 = 0
-        if engines != ['main']:
+        if engines != ['main'] and 'bsfc_coeffs' not in dir(self):
             self.bsfc_coeffs = {}
         for engine in engines:
             fuel = []
@@ -81,10 +81,11 @@ class Boat:
                 self.max_measured_power = max(max(power),self.max_measured_power)
                 ind1 += 1
 
-    def calc_speed_power(self, trials='all'):
+    def calc_speed_power(self, trials='all', fit_type = 'default'):
         """
         Calculates a cubic correlation between the shaft power and boat speed
         :param trials: list of sea trials. For example, many boats have "tanked" and "untanked" data
+        :param fit_type: Defines the type of fit to use. Can be 'default' or 'zero intercept'
         :return: None
         """
         plotting_functions.display_settings(interactive=True, inline=True)
@@ -106,11 +107,11 @@ class Boat:
                     power += temp['engines'][engine]['power']
             else:
                 power = temp['power']
-            self.sea_trials[trial]['speed_power_coeffs'] = data_tools.fit_plotter(speed, power, deg=3, xlabel=xlab, ylabel=ylab)
+            self.sea_trials[trial]['speed_power_coeffs'] = data_tools.fit_plotter(speed, power, deg=3, xlabel=xlab, ylabel=ylab, fit_type=fit_type)
             if 'engines' in temp:
                 for engine in temp['engines']:
                     power = temp['engines'][engine]['power']
-                    temp['engines'][engine]['speed_power_coeffs'] = data_tools.fit_plotter(speed, power, deg=3, xlabel=xlab, ylabel=ylab)
+                    temp['engines'][engine]['speed_power_coeffs'] = data_tools.fit_plotter(speed, power, deg=3, xlabel=xlab, ylabel=ylab, fit_type=fit_type)
             if self.max_measured_speed is None:
                 self.max_measured_speed = max(speed)
             else:
@@ -120,7 +121,7 @@ class Boat:
             else:
                 self.min_measured_speed = min(self.min_measured_speed,min(speed))
 
-    def bsfc_plot(self, engine, save=False, file_out=None, display=True, interactive=True, inline=False, units='gal/hp-hr'):
+    def bsfc_plot(self, engine, save=False, file_out=None, display=True, interactive=True, inline=False, units='gal/hp-hr', mfgdata = True):
         """
         Plot the brake specific fuel consumption curve for the engine
         :param engine: String identifying the engine data to be plotted
@@ -129,6 +130,7 @@ class Boat:
         :param display: Boolean determines whether to display the plot
         :param inline: If using Jupyter, this can be used to display the plot inline
         :param units: String defining units used for BSFC
+        :param mfgdata: include plot of manufacturer data
         :return: None
         """
         plotting_functions.display_settings(interactive=interactive, inline=inline)
@@ -160,7 +162,7 @@ class Boat:
                 label = "Measured data"
             plt.plot(psample, bsfc, color=COLORS[color_ind], linewidth=4, label=label)
             color_ind += 1
-        if hasattr(self,'prop_curve'):
+        if hasattr(self,'prop_curve') and mfgdata:
             needs_legend = True
             power = np.array(self.prop_curve['prop_power'])
             plt.plot(power, np.array(self.prop_curve['fuel'])/power, color=COLORS[color_ind], label="Manufacturer data")
@@ -246,10 +248,10 @@ class Boat:
         if type(engines) is list:
             for ind in range(0,len(engines)):
                 plt.figure(ind)
-            try:
-                self.mfg_prop_curve_plt()
-            except NameError:
-                pass
+                try:
+                    self.mfg_prop_curve_plt()
+                except NameError:
+                    pass
         counter = 2
         for trial in trials:
             temp = self.sea_trials[trial]
@@ -278,6 +280,7 @@ class Boat:
                     counter += 1
         for ind in range(0,len(engines)):
             engine = engines[ind]
+            plt.figure(ind)
             plt.xlabel('RPM', fontsize=14, fontweight='bold')
             plt.ylabel('Power [hp]', fontsize=14, fontweight='bold')
             plt.legend(loc='best') #bbox_to_anchor=(0.4, 0.95)
