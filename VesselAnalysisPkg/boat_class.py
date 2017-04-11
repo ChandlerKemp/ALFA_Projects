@@ -20,6 +20,8 @@ class Boat:
         :param file_path:   Path to a text file containing basic data about the boat. Must have the form label: data
         :param kwargs:      Optional input arguments...generally dicts of data constructed elsewhere.
         """
+        self.sea_trials = None
+        self.vdr = "No VDR data loaded"
         with open(file_path) as f:
             for row in f:
                 temp = row.split(':')
@@ -50,7 +52,7 @@ class Boat:
             trials = self.sea_trials.keys()
         # prop_curve indicates that the BSFC should be calculated based on manufacturer data, rather than measured data
         ind1 = 0
-        if engines != ['main'] and 'bsfc_coeffs' not in dir(self):
+        if 'bsfc_coeffs' not in dir(self):
             self.bsfc_coeffs = {}
         for engine in engines:
             fuel = []
@@ -71,13 +73,16 @@ class Boat:
                     for ind in range(0,len(temp['fuel'])):
                         if not np.isnan(temp['fuel'][ind]) and not np.isnan(temp['power'][ind]):
                             fuel.append(temp['fuel'][ind])
-                            power.append(temp['power'][ind])
+                            powerind = temp['power'][ind]
+                            try:
+                                powerind += temp['phantom'][ind]
+                            except KeyError:
+                                pass
+                                
+                            power.append(powerind)
                 # The bsfc is calculated based on a quadratic fit to the power vs fuel consumption (gal/hr) relationship
                 p = data_tools.fit_plotter(power, fuel, deg=2, xlabel='Shaft power (hp)', ylabel = 'Fuel gal/hr', checkfit=checkfit)
-                if engines == 'main':
-                    self.bsfc_coeffs_main = p
-                else:
-                    self.bsfc_coeffs[engine] = p
+                self.bsfc_coeffs[engine] = p
                 self.max_measured_power = max(max(power),self.max_measured_power)
                 ind1 += 1
 
@@ -85,7 +90,7 @@ class Boat:
         """
         Calculates a cubic correlation between the shaft power and boat speed
         :param trials: list of sea trials. For example, many boats have "tanked" and "untanked" data
-        :param fit_type: Defines the type of fit to use. Can be 'default' or 'zero intercept'
+        :param fit_type: Defines the type of fit to use. Can be 'default' or 'constrained'
         :return: None
         """
         plotting_functions.display_settings(interactive=True, inline=True)
@@ -152,7 +157,7 @@ class Boat:
         eng_ind = -1
         for p in plist:
             psample = np.linspace(1, self.max_measured_power, 1000)
-            bsfc = p[0] * psample + p[1] + p[2] / psample
+            bsfc = np.polynomial.polynomial.polyval(psample, np.array(list(reversed(p)))) / psample
             if units.lower() == 'gram/kw-hr':
                 bsfc = bsfc * RHO_FUEL / KW_PER_HP
             if needs_legend:
@@ -202,25 +207,32 @@ class Boat:
             if trial.lower() == 'bollard':
                 continue
             temp = self.sea_trials[trial]
-            speed = np.linspace(min(temp['speed']), self.max_measured_speed, 1000)
+            speed = np.linspace(min(temp['speed']), max(temp['speed']), 1000)
             p = list(reversed(temp['speed_power_coeffs']))
             power = np.polynomial.polynomial.polyval(speed, p)
             if 'engines' not in temp:
+                neng = 1 # number of engines used in trial
                 if bsfc_coeffs is None:
-                    fp = list(reversed(self.bsfc_coeffs_main))
+                    fp = list(reversed(self.bsfc_coeffs['main']))
                 else:
                     fp = list(reversed(bsfc_coeffs))
                 fuel = np.polynomial.polynomial.polyval(power, fp) / speed
             else:
                 fuel = np.zeros(speed.shape)
-                for engine in temp['engines']:
+                neng = 0 # counter for number of engines in trial
+                # In a trail shaft scenario two engines may be listed, but one should be omitted
+                engines = list(temp['engines'].keys())
+                for ind in reversed(range(0,len(engines))):
+                    if np.isnan(temp['engines'][engines[ind]]['fuel']).all():
+                        del engines[ind]
+                    else:
+                        neng += 1
+                for engine in engines:
                     if bsfc_coeffs is None:
                         fp = list(reversed(self.bsfc_coeffs[engine]))
                     else:
                         fp = list(reversed(bsfc_coeffs))
-                    # In a trail shaft scenario with an engine off, it consumes no fuel
-                    if temp['engines'][engine]['fuel'] != np.nan:
-                        fuel += np.polynomial.polynomial.polyval(power, fp) / speed
+                    fuel += np.polynomial.polynomial.polyval(power/neng, fp) / speed
             if write_results:
                 for i in range(0, len(fuel)):
                     if speed[i] - int(speed[i]) <= speed[1]-speed[0]:

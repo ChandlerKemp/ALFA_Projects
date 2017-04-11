@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import matplotlib
+import numpy as np
 
 
 def display_settings(interactive=True, inline=True):
@@ -65,3 +66,38 @@ def plot_fixer(ax=None):
     lw = 4
     for ln in ax.lines:
         ln.set_linewidth(lw)
+    plt.tight_layout()
+
+def hist_plot(data, bins=None, xlabel=None, ylabel=None):
+    """
+        A function for producing histograms of data
+        :param data: a list or an array of numerical data
+        :param bins: an integer number of bins or a list of bin boundaries
+        :param xlabel: x-axis label
+        :param ylabel: y-axis label
+        :return counts: array of counts for each bin
+        :return bins: array of bin boundaries
+        :return hndl: handle for bar plot
+    """
+    # define an array of bin boundaries
+    if bins is None:
+        bins = 30
+    try:
+        nbins = len(bins)-1
+    except TypeError:
+        nbins = bins
+        bins = np.linspace(min(data),max(data), nbins)
+
+    [counts, bins] = np.histogram(data, bins=bins)
+    counts = counts/sum(counts)
+    plot_prep()
+    width = (bins[-1]-bins[0])/nbins
+    hndl = plt.bar(bins[1:]-width/2,counts,width=width)
+    if xlabel is None:
+        xlabel = 'Bin center'
+    if ylabel is None:
+        ylabel = 'Fraction of time in bin'
+    plt.ylabel(ylabel, fontsize=14, fontweight='bold')
+    plt.xlabel(xlabel,fontsize=14, fontweight='bold')
+    plot_fixer()
+    return counts, bins, hndl

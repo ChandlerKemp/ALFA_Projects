@@ -1,6 +1,7 @@
 import numpy as np
 import csv
 from VesselAnalysisPkg import data_tools
+import datetime
 
 class VDR:
         """
@@ -49,7 +50,7 @@ class VDR:
 class ACLOGGER:
         def __init__(self, file_path, n_headerlines=1, **kwargs):
             """
-            Initialize a VDR object
+            Initialize an AClogger object
             :param file_path: Path to a vdr database exported to a csv
             :param n_headerlines: number of rows above the first row of data.
             :param kwargs: enter an identifying label followed by the index of each column to be read into the object
@@ -73,3 +74,45 @@ class ACLOGGER:
                         else:
                             temp.append(float(row[kwargs[data_label]]))
                     setattr(self, data_label.lower(), np.array(temp))
+
+class CSV_General:
+    """ A general class for storing data from a csv file in a python object"""
+    def __init__(self, file_path, n_headerlines=1, **kwargs):
+        """
+        Initialize a general csv object
+        :param file_path: Path to a csv file
+        :param n_headerlines: number of rows above the first row of data.
+        :param kwargs: enter an identifying label followed by the index of each column to be read into the object
+        :return:
+        """
+        with open(file_path) as file_var:
+            # Iterate over each data type specified in kwargs
+            # dialect = csv.Sniffer().sniff(file_var.read(2024), delimiters="\t,")
+            for data_label in kwargs:
+                dl = data_label.lower()
+                file_var.seek(0)
+                input_data = csv.reader(file_var, delimiter = ',')
+                for i in range(0, n_headerlines):
+                    next(input_data)
+                temp = []
+                for row in input_data:
+                    if row[kwargs[data_label]] == '':
+                        temp.append(np.nan)
+                        continue
+                    if dl == 'date_time' or dl == 'date' or dl == 'time':
+                        temp.append(data_tools.str_to_datetime(row[kwargs[data_label]]))
+                    else:
+                        temp.append(float(row[kwargs[data_label]]))
+                setattr(self, data_label, np.array(temp))
+
+    def date_time_comb(self, dateattr='date', timeattr='time'):
+        """
+            Combine date and time attributes to form a datetime attributes
+            :param dateattr: name of the date attribute (string)
+            :param timeattr: name of the time attribute (string)
+        """
+        date = getattr(self, dateattr)
+        time = getattr(self, timeattr)
+        setattr(self, 'date_time', [])
+        for ind in range(0,len(date)):
+             self.date_time.append(datetime.datetime.combine(date[ind], time[ind]))

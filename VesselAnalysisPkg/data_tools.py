@@ -24,12 +24,38 @@ def month_to_int(str_in):
 
 
 def str_to_datetime(str_in):
-    index = 0
-    test = 0
-    if '.' in str_in:
+    """
+    Convert a string to a datetime Object
+    """
+    #--------Determine whether the string is a date, a time or both------
+
+    if len(str_in) <= 10 and ':' not in str_in:
+        #Assume that time is not included
+        strtype = 'date'
+        temp = ['']*3
+    elif '/' not in str_in and '-' not in str_in:
+        # assume that date is not included
+        strtype = 'time'
+        if '.' in str_in:
+            temp = ['']*5
+        else:
+            temp = ['']*4
+    elif '.' in str_in:
+        strtype = 'datetime'
         temp = ['']*8
     else:
+        strtype = 'datetime'
         temp = ['']*7
+
+    #--------Define the position where the time part of the string begins
+    if strtype == 'datetime':
+        timestart = 3
+    else:
+        timestart = 0
+
+    #--------Read the string into a list
+    index = 0
+    test = 0
     for char in str_in:
         if char != ' ' and char != '/' and char != ':' and char != '-':
             if test == 1:
@@ -47,20 +73,28 @@ def str_to_datetime(str_in):
             temp[index] += char
         else:
             test = 1
-    if temp[-1].lower() == 'pm' and int(temp[3]) != 12:
-        temp[3] = int(temp[3]) + 12
-    elif temp[-1].lower() == 'am' and temp[3] == 12:
-        temp[3] = 0
-    elif temp[-1].lower() != 'am' and temp[-1].lower() != 'pm' and temp[-1].lower() != '':
-        raise ValueError('AM/PM not read correctly from file')
-    temp[0] = month_to_int(temp[0])
-    second = int(temp[5])
-    if '.' in str_in:
-        microsec = int(float(temp[6])*1e6)
+    #----------Convert the list into a datetime object
+    if strtype != 'date':
+        if temp[-1].lower() == 'pm' and int(temp[timestart]) != 12:
+            temp[timestart] = int(temp[timestart]) + 12
+        elif temp[-1].lower() == 'am' and temp[timestart] == 12:
+            temp[timestart] = 0
+        elif temp[-1].lower() != 'am' and temp[-1].lower() != 'pm' and temp[-1].lower() != '':
+            raise ValueError('AM/PM not read correctly from file')
+        second = int(temp[timestart+2])
+        if '.' in str_in:
+            microsec = int(float(temp[timestart+3])*1e6)
+        else:
+            microsec = 0
+    if strtype != 'time':
+        temp[0] = month_to_int(temp[0])
+    if strtype == 'date':
+        return datetime.date(int(temp[2]), int(temp[0]), int(temp[1]))
+    elif strtype == 'time':
+        return datetime.time(int(temp[0]), int(temp[1]), second, microsec)
     else:
-        microsec = 0
-    return datetime.datetime(int(temp[2]), int(temp[0]), int(temp[1]), int(temp[3]),
-                                       int(temp[4]),second,microsec)
+        return datetime.datetime(int(temp[2]), int(temp[0]), int(temp[1]), int(temp[3]), int(temp[4]), second, microsec)
+
 
 
 def time_match(times, target, delta_t):
@@ -102,6 +136,8 @@ def fit_plotter(x, y, deg=2, xlabel='x', ylabel='y', checkfit=True, fit_type = '
     :param deg: degree of polymonial
     :param xlabel: x-axis label for plots
     :param ylabel: y-axis label for plots
+    :param checkfit: prints a plot of the fit if True
+    :param fit_type: defines the fitting method to use. Can be 'default' or 'constrained'
     :return: p: list of coefficients-- p
     """
     if fit_type.lower() == 'default':
