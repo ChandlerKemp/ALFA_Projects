@@ -259,7 +259,7 @@ def loads(vessel, elecfreezer, start, end, track_err=True, cond_in=None):
 
 def load_timeseries(load_res):
     """
-    A function to return total load arrays for hydraulic and electric freezer vessels
+    A function to return total load arrays for hydraulic and electric freezer, and non-refrigeration vessels
     :param load_res: dict of load categories and associated load arrays (kW)
     :return hydtotal: timeseries of total loads on a hydraulic freezer vessel
     :return electotal: timeseries of total loads on an electric freezer vessel
@@ -268,10 +268,16 @@ def load_timeseries(load_res):
     hydtotal = np.zeros(load_res['deck'].shape)
     for cat in hydcats:
         hydtotal += load_res[cat]
+
     ecats = ['dc', 'deck', 'efreeze', 'prop']
     electotal = np.zeros(load_res['deck'].shape)
     for cat in ecats:
         electotal += load_res[cat]
+
+    icecats = ['dc', 'deck', 'prop']
+    icetotal = np.zeros(load_res['deck'].shape)
+    for cat in icecats:
+        icetotal += load_res[cat]
     return hydtotal, electotal
 
 
@@ -279,7 +285,7 @@ def night_day(vessel, cond):
     """
     A function to define night and day conditions and hours
     :param vessel: A vessel object with necessary vdr fields
-    :param cond: a boolean array True for times to be included in the analysis
+    :param cond: a boolean array, True for times to be included in the analysis
     :return daycond: a boolean array True for times defined as 'day'
     :return nightcond: a boolean array True for times defines as 'night'
     :return day_hrs: total number of hours defined as 'day' in the set
@@ -293,11 +299,27 @@ def night_day(vessel, cond):
     return daycond, nightcond, day_hrs, night_hrs
 
 
+def fuel_of_load(load, bsfc_coeffs, hrs):
+    """
+    A function to calculate the fuel consumption of an engine given its bsfc coeffs,
+    hrs of operation, and the applied load.
+    :param load: Distribution of total load on the engine [hp--should match bsfc_coeffs units]
+    :param bsfc_coeffs: coefficients of BSFC curve for the engine (gal/hr = polyval(load, bsfc_coeffs))
+    :param hrs: total hours put on the engine
+    :return fuel: total gallons consumed in the given time
+    """
+    counts, bins = np.histogram(load)
+    counts = counts / sum(counts)
+    bincenters = (bins[:-1] + bins[1:])/2
+    fuel = sum(polyval(bincenters, bsfc_coeffs) * counts) * hrs
+    return fuel
+
+
 def season_fuel(vessel, efreeze, pmain_in, paux_in, aux_cutoff, start, end, load_res, cond,
                 track_err=True, print_results=False):
     """
     A function to calculate the fuel consumption of hybrid and basic
-    propulsion systems with hybrid and electric freezers.
+    propulsion systems with hybrid, electric, and ice-based cooling systems.
     :param load_res: dict of load categories and loads (kW)
     :param cond: boolean array True for datetimes in vessel to be used in the analysis
     :param vessel: a vessel object with vdr data (designed for the object saved as myriad.p)
@@ -309,14 +331,58 @@ def season_fuel(vessel, efreeze, pmain_in, paux_in, aux_cutoff, start, end, load
     :param end: Latest datetime to be included from Myriad data.
     :param track_err: Print warnings if True
     :pram print_results: Print a summary table at end of function if True
-    :return fuel: Array of fuel consumed in each scenario (gal)
+    :return fuel: Dict of fuel consumed in each scenario (gal)
     :return auxhrs: Array of hours put on the auxiliary in each scenario
     :return mainhrs: Array of hours put on the main in each scenario
         note: order of returns is electric basic, electric hybrid,
             hydrualic basic, hydraulic hybrid
+            
+    Definition of scenarios:
+    1. 47’ Troll vessel without refrigeration
+        a. Base case—single engine vessel with main engine powering all propulsion, deck hydraulic and AC/DC electric 
+            needs.
+        b. Battery powered hybrid propulsion— Main engine powers a 5 KW DC generator to charge batteries in addition to 
+            all propulsion, deck hydraulic and AC/DC electric needs when operating.  In Hybrid mode, 10 KW/hr Lithium 
+            ion batteries power 15KW electric propulsion motor, 4kw hydraulic power pack, and provide AC/DC hotel needs.
+            Batteries provide power for approximately X hours of hybrid operation then require XX hours of recharging.
+
+    2. 47’ troll vessel with refrigeration
+        a. Single engine with electric powered blast freeze system— Main engine powers a 15 KW DC generator to power 
+            refrigeration system in addition to all propulsion, deck hydraulic and AC/DC electric needs.  
+            Main engine operates 24 hrs/day.
+        b. Single engine with hydraulic powered blast freeze system— Main engine powers a 6 cubic inch pressure 
+            compensating hydraulic pump to power refrigeration system in addition to all propulsion, deck hydraulic and 
+            AC/DC electric needs.  Main engine operates 24 hrs/day.
+        c. Single engine with battery powered hybrid propulsion and electric powered blast freeze system— Main engine 
+            powers a 15 KW DC generator to power refrigeration system in addition to all propulsion, deck hydraulic and 
+            AC/DC electric needs. In Hybrid mode, 10 KW/hr Lithium ion batteries power 15KW electric propulsion motor, 
+            4kw hydraulic power pack, and provide AC/DC hotel needs.  Batteries provide power for approximately X hours 
+            of hybrid operation then require XX hours of recharging.
+
+    3.  47’ troll vessel with refrigeration and 30 KW gen set
+        a. 30 Kw gen set powers refrigeration system; main engine powers all propulsion, deck hydraulic and AC/DC 
+            electric needs.  Gen set operates 24 hrs/day.  Main engine also operating to power all propulsion, deck 
+            hydraulic and AC/DC electric needs when in fishing mode
+        b. Gen set or main engine power hydraulic refrigeration system; main engine powers all propulsion, deck 
+            hydraulic and AC/DC electric needs when in fishing mode, gen set provides hotel AC and refrigeration 
+            hydraulic power at night.  Only 1 engine operating at a time.
+        c.  Hybrid drive—Gen set powers 15 KW electric propulsion motor when in fishing mode in addition to 
+            refrigeration, deck hydraulic, and AC/DC loads.  Main engine used for peak loads and transit to and from 
+            fishing grounds.  15 KW propulsion motor acts as AC generator when main engine engaged providing electric 
+            power for refrigeration.  This configuration only requires a single engine to operate at a time and provides 
+            redundant refrigeration and propulsion power.
+        d. Hybrid drive with batteries-- Gen set powers propulsion motor when in fishing mode in addition
+            to electric refrigeration system, deck hydraulic, AC/DC loads, and a 16KW/hr of battery charging capacity. 
+            Main engine  used for peak loads and transit to and from fishing grounds.  15 KW propulsion motor acts as AC 
+            generator when main engine engaged providing electric power for refrigeration.  This configuration only  
+            requires a single engine to operate at a time and provides redundant refrigeration and propulsion power.   
+            Batteries provide power for approximately X hours of hybrid operation then require XX hours of recharging.
     """
+    dc_gen_eff = 0.9
+
+    fuel, auxhrs, mainhrs = {}, {}, {}
     # Create load timeseries ------------------------------------
-    hydtotal, electotal = load_timeseries(load_res)
+    hydtotal, electotal, icetotal = load_timeseries(load_res)
 
     # Put bsfc coeffs in the correct order ---------------------
     pmain = np.array(list(reversed(pmain_in)))
@@ -325,7 +391,56 @@ def season_fuel(vessel, efreeze, pmain_in, paux_in, aux_cutoff, start, end, load
     # Define night and day conditions ---------------------------
     daycond, nightcond, day_hrs, night_hrs = night_day(vessel, cond)
 
+    # Troll vessel w/o refrigeration, single engine --------------------------------------------------------------------
+    label = '1a'
+    fuel[label] = fuel_of_load(icetotal[daycond], pmain, day_hrs)
+    mainhrs[label] = day_hrs
+    auxhrs[label] = 0
+
+    # Troll vessel with refrigeration, single engine -------------------------------------------------------------------
+    label = '2a'
+    total_load = electotal + load_res['efreeze'] * (1 - dc_gen_eff)
+    fuel[label] = fuel_of_load(total_load, pmain, day_hrs+night_hrs)
+    mainhrs[label] = day_hrs + night_hrs
+    auxhrs[label] = 0
+
+    label = '2b'
+    fuel[label] = fuel_of_load(hydtotal, pmain, day_hrs + night_hrs)
+    mainhrs[label] = day_hrs + night_hrs
+    auxhrs[label] = 0
+
+    # Troll vessel with refrigeration and auxiliary engine -------------------------------------------------------------
+    label = '3a'
+    auxfuel = fuel_of_load(load_res['efreeze'], paux, day_hrs + night_hrs)
+    mainload = load_res['dc'] + load_res['deck'] + load_res['prop']
+    mainfuel = fuel_of_load(mainload, pmain, day_hrs)
+    fuel[label] = auxfuel + mainfuel
+    mainhrs[label] = day_hrs
+    auxhrs[label] = day_hrs + night_hrs
+
+    label = '3b'
+    auxfuel = fuel_of_load(hydtotal[night_cond], paux, night_hrs)
+    mainfuel = fuel_of_load(hydtotal[day_cond], pmain, day_hrs)
+    fuel[label] = auxfuel + mainfuel
+    mainhrs[label] = day_hrs
+    auxhrs[label] = night_hrs
+
+    label = '3c'
+    auxcond = total_load < aux_cutoff
+    maincond = total_load >= aux_cutoff
+    auxhrs[label] = (night_hrs + day_hrs) * sum(auxcond)/len(auxcond)
+    auxfuel = fuel_of_load(electotal[auxcond], paux, auxhrs[label])
+    mainhrs[label] = night_hrs + day_hrs - auxhrs
+    mainload = electotal[maincond] + load_res['efreeze'][maincond] * (1 - dc_gen_eff)
+    mainfuel = fuel_of_load(mainload, pmain, mainhrs[label])
+    fuel[label] = mainfuel + auxfuel
+
+    label = '3d'
+
+
+
     # Aux load with electric freezer during no-propulsion times -----------------------
+
     counts, bins = np.histogram(electotal[nightcond])
     counts = counts / sum(counts)
     bincenters = (bins[:-1] + bins[1:]) / 2
@@ -476,7 +591,12 @@ def sf_main_ref(vessel, efreeze, pmain_in, paux_in, aux_cutoff, start, end, load
     return fuel, auxhrs, mainhrs
 
 
-
+battery_load_calculator(load_timeseries, batt_cap, batt_cutoff=None):
+    """
+    A function for calculating the load placed on an engine through time based on a vessel's total load time series and
+    battery properties.
+    :param load_timeseries: a time series of total load (
+    """
 def sf_battery(vessel, efreeze, pmain_in, batt_cap, start, end, load_res, cond,
                batt_cutoff=None, track_err=True, print_results=False):
     """
