@@ -331,7 +331,6 @@ def fuel_of_load(load, bsfc_coeffs, hrs):
     counts, bins = np.histogram(load, bins=100)
     counts = counts / sum(counts)
     bincenters = (bins[:-1] + bins[1:])/2
-    print(bins[-3:])
     fuel = sum(polyval(bincenters, bsfc_coeffs) * counts) * hrs
     return fuel
 
@@ -449,10 +448,11 @@ def season_fuel(vessel, battery, pmain_in, paux_in, aux_cutoff, start, end, load
 
     # Troll vessel with refrigeration and auxiliary engine -------------------------------------------------------------
     label = '3a'
-    auxfuel = fuel_of_load(load_res['efreeze'], paux, day_hrs + night_hrs)
+    auxfuel1 = fuel_of_load(load_res['efreeze'][daycond], paux, day_hrs)
+    auxfuel2 = fuel_of_load(electotal[nightcond], paux, night_hrs)
     mainload = load_res['dc'] + load_res['deck'] + load_res['prop']
-    mainfuel = fuel_of_load(mainload, pmain, day_hrs)
-    fuel[label] = auxfuel + mainfuel
+    mainfuel = fuel_of_load(mainload[daycond], pmain, day_hrs)
+    fuel[label] = auxfuel1 + auxfuel2 + mainfuel
     mainhrs[label] = day_hrs
     auxhrs[label] = day_hrs + night_hrs
 
