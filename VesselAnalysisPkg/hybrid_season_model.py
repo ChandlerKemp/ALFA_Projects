@@ -484,6 +484,7 @@ def season_fuel(vessel, battery, pmain_in, paux_in, aux_cutoff, start, end, load
     mainhrs[label] = sum(maincond) * timestep
     return fuel, auxhrs, mainhrs
 
+
 def battery_load_calculator(load, batt_cap, batt_cutoff=None, docked=None):
     """
     A function for calculating the load placed on an engine through time based on a vessel's total load time series and
