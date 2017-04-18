@@ -405,7 +405,7 @@ def season_fuel(vessel, battery, pmain_in, paux_in, aux_cutoff, start, end, load
     # Create load timeseries ------------------------------------
     hydtotal, electotal, icetotal = load_timeseries(load_res)
 
-    # Put bsfc coeffs in the correct order ---------------------
+    # Put bsfc coeffs in the correct order and switch from hp basis to kW basis ---------------------
     pmain = np.array(list(reversed(pmain_in)))
     paux = np.array(list(reversed(paux_in)))
 
