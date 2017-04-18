@@ -278,7 +278,7 @@ def load_timeseries(load_res):
     icetotal = np.zeros(load_res['deck'].shape)
     for cat in icecats:
         icetotal += load_res[cat]
-    return hydtotal, electotal
+    return hydtotal, electotal, icetotal
 
 
 def night_day(vessel, cond):
@@ -299,6 +299,26 @@ def night_day(vessel, cond):
     return daycond, nightcond, day_hrs, night_hrs
 
 
+def vessel_docked(vessel, cond, timestep = 1/30):
+    """
+    A function to define when a vessel was docked
+    :param vessel: A vessel object with necessary vdr fields
+    :param cond: a boolean array, True for times to be included in the analysis
+    :param timestep: length of time step in recording (hrs)
+    :return docked: a boolean array True for times when the vessel was docked
+    """
+    t = vessel.vdr['tach'][cond]
+    docked = np.zeros(cond.shape, dtype=bool)
+    counter = 0
+    for ind in range(0, len(t)):
+        if t[ind] < 200:
+            counter += 1
+        else:
+            counter = 0
+        if counter * timestep > 24:
+            docked[max(0, ind-counter):ind] = True
+    return docked
+
 def fuel_of_load(load, bsfc_coeffs, hrs):
     """
     A function to calculate the fuel consumption of an engine given its bsfc coeffs,
@@ -315,7 +335,7 @@ def fuel_of_load(load, bsfc_coeffs, hrs):
     return fuel
 
 
-def season_fuel(vessel, efreeze, pmain_in, paux_in, aux_cutoff, start, end, load_res, cond,
+def season_fuel(vessel, battery, pmain_in, paux_in, aux_cutoff, start, end, load_res, cond,
                 track_err=True, print_results=False):
     """
     A function to calculate the fuel consumption of hybrid and basic
@@ -323,7 +343,7 @@ def season_fuel(vessel, efreeze, pmain_in, paux_in, aux_cutoff, start, end, load
     :param load_res: dict of load categories and loads (kW)
     :param cond: boolean array True for datetimes in vessel to be used in the analysis
     :param vessel: a vessel object with vdr data (designed for the object saved as myriad.p)
-    :param elecfreezer: a general csv object storying ac logger recordings for a freezer system (amps)
+    :param battery: a dict defining a battery system
     :param pmain_in: Main engine bsfc coeffs (reversed by fcn)
     :param paux_in: Auxiliary engine bsfc coeffs (reversed by fcn)
     :param aux_cutoff: Maximum power supplied by auxiliary
@@ -379,6 +399,7 @@ def season_fuel(vessel, efreeze, pmain_in, paux_in, aux_cutoff, start, end, load
             Batteries provide power for approximately X hours of hybrid operation then require XX hours of recharging.
     """
     dc_gen_eff = 0.9
+    timestep = 1/30 #hrs
 
     fuel, auxhrs, mainhrs = {}, {}, {}
     # Create load timeseries ------------------------------------
@@ -391,15 +412,25 @@ def season_fuel(vessel, efreeze, pmain_in, paux_in, aux_cutoff, start, end, load
     # Define night and day conditions ---------------------------
     daycond, nightcond, day_hrs, night_hrs = night_day(vessel, cond)
 
+    # Define times when vessel was at the dock -------------------------------------------------------------------------
+    docked = vessel_docked(vessel, cond)
+
     # Troll vessel w/o refrigeration, single engine --------------------------------------------------------------------
     label = '1a'
     fuel[label] = fuel_of_load(icetotal[daycond], pmain, day_hrs)
     mainhrs[label] = day_hrs
     auxhrs[label] = 0
 
+    label = '1b'
+    eng_load, batt_hrs = battery_load_calculator(icetotal, battery['batt_cap'], docked=docked)
+    maincond = eng_load > 0
+    fuel[label] = fuel_of_load(eng_load[maincond], pmain, sum(maincond) * timestep)
+    auxhrs[label] = 0
+    mainhrs[label] = sum(maincond) * timestep
+
     # Troll vessel with refrigeration, single engine -------------------------------------------------------------------
     label = '2a'
-    total_load = electotal + load_res['efreeze'] * (1 - dc_gen_eff)
+    total_load = electotal + 0 #load_res['efreeze'] * (1 - dc_gen_eff)
     fuel[label] = fuel_of_load(total_load, pmain, day_hrs+night_hrs)
     mainhrs[label] = day_hrs + night_hrs
     auxhrs[label] = 0
@@ -408,6 +439,13 @@ def season_fuel(vessel, efreeze, pmain_in, paux_in, aux_cutoff, start, end, load
     fuel[label] = fuel_of_load(hydtotal, pmain, day_hrs + night_hrs)
     mainhrs[label] = day_hrs + night_hrs
     auxhrs[label] = 0
+
+    label = '2c'
+    eng_load, batt_hrs = battery_load_calculator(electotal, battery['batt_cap'], docked=docked)
+    maincond = eng_load > 0
+    fuel[label] = fuel_of_load(eng_load[maincond], pmain, sum(maincond) * timestep)
+    auxhrs[label] = 0
+    mainhrs[label] = sum(maincond) * timestep
 
     # Troll vessel with refrigeration and auxiliary engine -------------------------------------------------------------
     label = '3a'
@@ -419,8 +457,8 @@ def season_fuel(vessel, efreeze, pmain_in, paux_in, aux_cutoff, start, end, load
     auxhrs[label] = day_hrs + night_hrs
 
     label = '3b'
-    auxfuel = fuel_of_load(hydtotal[night_cond], paux, night_hrs)
-    mainfuel = fuel_of_load(hydtotal[day_cond], pmain, day_hrs)
+    auxfuel = fuel_of_load(hydtotal[nightcond], paux, night_hrs)
+    mainfuel = fuel_of_load(hydtotal[daycond], pmain, day_hrs)
     fuel[label] = auxfuel + mainfuel
     mainhrs[label] = day_hrs
     auxhrs[label] = night_hrs
@@ -430,173 +468,73 @@ def season_fuel(vessel, efreeze, pmain_in, paux_in, aux_cutoff, start, end, load
     maincond = total_load >= aux_cutoff
     auxhrs[label] = (night_hrs + day_hrs) * sum(auxcond)/len(auxcond)
     auxfuel = fuel_of_load(electotal[auxcond], paux, auxhrs[label])
-    mainhrs[label] = night_hrs + day_hrs - auxhrs
+    mainhrs[label] = night_hrs + day_hrs - auxhrs[label]
     mainload = electotal[maincond] + load_res['efreeze'][maincond] * (1 - dc_gen_eff)
     mainfuel = fuel_of_load(mainload, pmain, mainhrs[label])
     fuel[label] = mainfuel + auxfuel
 
     label = '3d'
-
-
-
-    # Aux load with electric freezer during no-propulsion times -----------------------
-
-    counts, bins = np.histogram(electotal[nightcond])
-    counts = counts / sum(counts)
-    bincenters = (bins[:-1] + bins[1:]) / 2
-    elec_night = sum(polyval(bincenters, paux) * counts) * night_hrs
-
-    # Aux load with hydraulic freezer during no-propulsion times -----------------------
-    counts, bins = np.histogram(hydtotal[nightcond])
-    counts = counts / sum(counts)
-    bincenters = (bins[:-1] + bins[1:]) / 2
-    hyd_night = sum(polyval(bincenters, paux) * counts) * night_hrs
-
-    # Fuel consumed by the main engine in an electric freezer boat -------------------------
-    # No hybrid propulsion, freezer always powered by auxiliary
-    counts, bins = np.histogram(electotal[daycond] - load_res['efreeze'][daycond], bins=100)
-    counts = counts / sum(counts)
-    bincenters = (bins[:-1] + bins[1:]) / 2
-    main = sum(polyval(bincenters, pmain) * counts) * day_hrs
-
-    # Fuel consumed by the auxiliary to power an electric freezer while the main is running
-    # No hybrid propulsion, freezer always powered by auxiliary
-    counts, bins = np.histogram(load_res['efreeze'][daycond], bins=100)
-    counts = counts / sum(counts)
-    bincenters = (bins[:-1] + bins[1:]) / 2
-    aux_default = sum(polyval(bincenters, paux) * counts) * day_hrs
-    elecbasic = main + aux_default + elec_night
-
-    # Fuel consumed by a hybrid propulsion system with an electric freezer
-    # This is fuel consumed by the main:
-    cond = (electotal > aux_cutoff) & daycond
-    counts, bins = np.histogram(electotal[cond] - load_res['efreeze'][cond], bins=100)
-    counts = counts / sum(counts)
-    bincenters = (bins[:-1] + bins[1:]) / 2
-    mainhrs_eh = day_hrs * sum(cond) / sum(daycond)
-    main = sum(polyval(bincenters, pmain) * counts) * mainhrs_eh
-    # This is fuel consumed by the auxiliary while the main is running:
-    counts, bins = np.histogram(load_res['efreeze'][cond], bins=100)
-    counts = counts / sum(counts)
-    bincenters = (bins[:-1] + bins[1:]) / 2
-    aux_hrs1 = day_hrs * sum(cond) / sum(daycond)
-    aux1 = sum(polyval(bincenters, paux) * counts) * aux_hrs1
-
-    # This is fuel consumed by the auxiliary while the main is off:
-    cond = (electotal <= aux_cutoff) & daycond
-    counts, bins = np.histogram(electotal[cond], bins=100)
-    counts = counts / sum(counts)
-    bincenters = (bins[:-1] + bins[1:]) / 2
-    aux_hrs2 = day_hrs * sum(cond) / sum(daycond)
-    aux2 = sum(polyval(bincenters, paux) * counts) * aux_hrs2
-
-    elechybrid = main + aux1 + aux2 + elec_night
-
-    # Hydraulic freezer load
-    cond = (hydtotal < aux_cutoff) & daycond
-    counts, bins = np.histogram(hydtotal[daycond], bins=100)
-    counts = counts / sum(counts)
-    bincenters = (bins[:-1] + bins[1:]) / 2
-    main2, hybrid = hybrid_fuel_savings(counts, bincenters, pmain, paux, aux_cutoff, day_hrs)
-    hydbasic = main2 + hyd_night
-    hydhybrid = hybrid + hyd_night
-
-    auxhrs_eb = night_hrs + day_hrs
-    auxhrs_eh = night_hrs + aux_hrs1 + aux_hrs2
-    auxhrs_hb = night_hrs
-    auxhrs_hh = night_hrs + day_hrs * sum(cond) / sum(daycond)
-    mainhrs_eb = day_hrs
-    # mainhrs_eh is already defined
-    mainhrs_hb = day_hrs
-    mainhrs_hh = day_hrs * (1 - sum(cond) / sum(daycond))
-
-    fuel = np.array([elecbasic, elechybrid, hydbasic, hydhybrid])
-    auxhrs = np.array([auxhrs_eb, auxhrs_eh, auxhrs_hb, auxhrs_hh])
-    mainhrs = np.array([mainhrs_eb, mainhrs_eh, mainhrs_hb, mainhrs_hh])
-    if print_results:
-        print("Myriad main bsfc, 20 kW auxiliary: ")
-        print('Electric freezer basic & ' + '{:0.0f}'.format(elecbasic) + ' \\\\')
-        print('Electric freezer hybrid & ' + '{:0.0f}'.format(elechybrid) + ' \\\\')
-        print('Hydraulic freezer basic & ' + '{:0.0f}'.format(hydbasic) + ' \\\\')
-        print('Hydraulic freezer hybrid & ' + '{:0.0f}'.format(hydhybrid) + ' \\\\')
+    eng_load, batt_hrs = battery_load_calculator(electotal, battery['batt_cap'], docked=docked)
+    auxcond = (eng_load <= aux_cutoff) & (eng_load > 0)
+    maincond = (eng_load >= aux_cutoff) & (eng_load > 0)
+    auxfuel = fuel_of_load(eng_load[auxcond], paux, sum(auxcond) * timestep)
+    mainfuel = fuel_of_load(eng_load[maincond], pmain, sum(maincond) * timestep)
+    fuel[label] = mainfuel + auxfuel
+    auxhrs[label] = sum(auxcond) * timestep
+    mainhrs[label] = sum(maincond) * timestep
     return fuel, auxhrs, mainhrs
 
-
-def sf_main_ref(vessel, efreeze, pmain_in, paux_in, aux_cutoff, start, end, load_res, cond,
-                track_err=True, print_results=False):
-    """
-    A function to calculate the fuel consumption of a system in which the main
-    can provide eletricity.
-    :param vessel: a vessel object with vdr data (designed for the object saved as myriad.p)
-    :param elecfreezer: a general csv object storying ac logger recordings for a freezer system (amps)
-    :param load_res: dict of load categories and loads (kW)
-    :param cond: boolean array True for datetimes in vessel to be used in the analysis
-    :param pmain_in: Main engine bsfc coeffs (reversed by fcn)
-    :param paux_in: Auxiliary engine bsfc coeffs (reversed by fcn)
-    :param aux_cutoff: Maximum power supplied by auxiliary
-    :param start: Earliest datetime to be included from Myriad data.
-    :param end: Latest datetime to be included from Myriad data.
-    :param track_err: Print warnings if True
-    :param print_results: Print a summary table at end of function if True
-    :return fuel: Array of fuel consumed in each scenario (gal)
-    :return auxhrs: Array of hours put on the auxiliary in each scenario
-    :return mainhrs: Array of hours put on the main in each scenario
-        Note: Order of returns is hybrid, no auxiliary
-    """
-
-    # Create load timeseries ------------------------------------
-    hydtotal, electotal = load_timeseries(load_res)
-
-    # Put bsfc coeffs in the correct order ---------------------
-    pmain = np.array(list(reversed(pmain_in)))
-    paux = np.array(list(reversed(paux_in)))
-
-    # Define night and day conditions ---------------------------
-    daycond, nightcond, day_hrs, night_hrs = night_day(vessel, cond)
-
-    # Fuel with electric freezer during no-propulsion times
-    counts, bins = np.histogram(electotal[nightcond])
-    counts = counts / sum(counts)
-    bincenters = (bins[:-1] + bins[1:]) / 2
-    main_night = sum(polyval(bincenters, pmain) * counts) * night_hrs
-    elec_night = sum(polyval(bincenters, paux) * counts) * night_hrs
-
-    # Fuel consumed by the main engine in an electric freezer boat
-    # with freezer run on the main
-    cond_temp = (electotal > aux_cutoff) & daycond
-    main_hrs = sum(cond_temp) / sum(daycond) * day_hrs
-    counts, bins = np.histogram(electotal[cond_temp], bins=100)
-    counts = counts / sum(counts)
-    bincenters = (bins[:-1] + bins[1:]) / 2
-    main_day1 = sum(polyval(bincenters, pmain) * counts) * main_hrs
-    main = sum(polyval(bincenters, pmain) * counts) * main_hrs
-
-    # Fuel consumed by the auxiliary during propulsion times
-    cond_temp = (electotal <= aux_cutoff) & daycond
-    aux_hrs = sum(cond_temp) / sum(daycond) * day_hrs
-    counts, bins = np.histogram(electotal[cond_temp], bins=100)
-    counts = counts / sum(counts)
-    bincenters = (bins[:-1] + bins[1:]) / 2
-    main_day2 = sum(polyval(bincenters, pmain) * counts) * aux_hrs
-    aux_day = sum(polyval(bincenters, paux) * counts) * aux_hrs
-
-    total_fuel = elec_night + main + aux_day
-    main_fuel = main_night + main_day1 + main_day2
-    total_hrs = day_hrs + night_hrs
-    aux_hy_hrs = aux_hrs + night_hrs
-    main_hy_hrs = total_hrs - aux_hy_hrs
-    fuel = np.array([total_fuel, main_fuel])
-    auxhrs = np.array([aux_hy_hrs, 0])
-    mainhrs = np.array([main_hy_hrs, total_hrs])
-    return fuel, auxhrs, mainhrs
-
-
-battery_load_calculator(load_timeseries, batt_cap, batt_cutoff=None):
+def battery_load_calculator(load, batt_cap, batt_cutoff=None, docked=None):
     """
     A function for calculating the load placed on an engine through time based on a vessel's total load time series and
     battery properties.
-    :param load_timeseries: a time series of total load (
+    :param load: a time series of total load (kW)
+    :param batt_cap: battery capacity (kWh)
+    :param batt_cutoff: max discharge rate of the batteries--calculated if left as None (kW)
+    :param docked: boolean array, True if vessel is at the dock.
+    :return eng_load: time series of the load placed on the engine
     """
+    # Define battery characteristics --------------------------------
+    # The max conditions enforces a max charging rate of 50 kW
+    charge_time = max(1, batt_cap / 50)  # hr
+    discharge_time = 1  # hr
+    charge_rate = batt_cap / charge_time  # kW
+    if batt_cutoff is None:
+        batt_cutoff = batt_cap / discharge_time  # kW
+    batt_eff = 0.9
+
+    # Initialize variables ---------------------------------------------------------------------------------------------
+    batt_charge = np.zeros(load.shape[0]+1)
+    eng_load = np.zeros(load.shape)
+    charging = False
+    timestep = 1 / 30  # hrs
+    for ind in range(0, len(load)):
+        # Calculating battery state and fuel consumption ------------
+        if docked is not None and docked[ind]:
+            eng_load[ind] = 0
+            batt_charge[ind+1] = batt_charge[ind] + charge_rate * timestep
+            if batt_charge[ind + 1] > batt_cap:
+                charging = False
+        elif load[ind] < batt_cutoff:
+            if batt_charge[ind] > 0 and not charging:
+                batt_charge[ind+1] = (batt_charge[ind] - load[ind] * timestep)
+                eng_load[ind] = 0
+            else:
+                charging = True
+                batt_charge[ind+1] = batt_charge[ind] + charge_rate * timestep
+                eng_load[ind] = charge_rate / batt_eff + load[ind]
+                if batt_charge[ind+1] >= batt_cap:
+                    charging = False
+        else:
+            if batt_charge[ind] < batt_cap:
+                eng_load[ind] = load[ind] + charge_rate / batt_eff
+                batt_charge[ind+1] = batt_charge[ind] + charge_rate * timestep
+                if batt_charge[ind+1] > batt_cap:
+                    charging = False
+            else:
+                eng_load[ind] = load[ind]
+    return eng_load, batt_charge
+
 def sf_battery(vessel, efreeze, pmain_in, batt_cap, start, end, load_res, cond,
                batt_cutoff=None, track_err=True, print_results=False):
     """
