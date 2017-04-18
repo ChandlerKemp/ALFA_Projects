@@ -421,15 +421,17 @@ def season_fuel(vessel, battery, pmain_in, paux_in, aux_cutoff, start, end, load
     auxhrs[label] = 0
 
     label = '1b'
-    eng_load, batt_hrs = battery_load_calculator(icetotal, battery['batt_cap'], docked=docked)
+    eng_load, batt_charge = battery_load_calculator(icetotal[daycond], battery['batt_cap'], docked=docked)
     maincond = eng_load > 0
-    fuel[label] = fuel_of_load(eng_load[maincond], pmain, sum(maincond) * timestep)
+    mainhrs[label] = sum(maincond) / len(maincond) * day_hrs
+    fuel[label] = fuel_of_load(eng_load[maincond], pmain, mainhrs[label])
     auxhrs[label] = 0
     mainhrs[label] = sum(maincond) * timestep
 
     # Troll vessel with refrigeration, single engine -------------------------------------------------------------------
     label = '2a'
     total_load = electotal + 0 #load_res['efreeze'] * (1 - dc_gen_eff)
+    print(max(total_load), np.average(total_load), min(total_load))
     fuel[label] = fuel_of_load(total_load, pmain, day_hrs+night_hrs)
     mainhrs[label] = day_hrs + night_hrs
     auxhrs[label] = 0
@@ -440,11 +442,12 @@ def season_fuel(vessel, battery, pmain_in, paux_in, aux_cutoff, start, end, load
     auxhrs[label] = 0
 
     label = '2c'
-    eng_load, batt_hrs = battery_load_calculator(electotal, battery['batt_cap'], docked=docked)
+    eng_load, _ = battery_load_calculator(electotal, battery['batt_cap'], docked=docked)
     maincond = eng_load > 0
-    fuel[label] = fuel_of_load(eng_load[maincond], pmain, sum(maincond) * timestep)
+    print(max(eng_load[maincond]), np.average(eng_load[maincond]), min(eng_load[maincond]))
+    mainhrs[label] = sum(maincond)/len(maincond) * (day_hrs+night_hrs)
+    fuel[label] = fuel_of_load(eng_load[maincond], pmain, mainhrs[label])
     auxhrs[label] = 0
-    mainhrs[label] = sum(maincond) * timestep
 
     # Troll vessel with refrigeration and auxiliary engine -------------------------------------------------------------
     label = '3a'
@@ -474,15 +477,15 @@ def season_fuel(vessel, battery, pmain_in, paux_in, aux_cutoff, start, end, load
     fuel[label] = mainfuel + auxfuel
 
     label = '3d'
-    eng_load, batt_hrs = battery_load_calculator(electotal, battery['batt_cap'], docked=docked)
+    eng_load, _ = battery_load_calculator(electotal, battery['batt_cap'], docked=docked)
     auxcond = (eng_load <= aux_cutoff) & (eng_load > 0)
     maincond = (eng_load >= aux_cutoff) & (eng_load > 0)
-    auxfuel = fuel_of_load(eng_load[auxcond], paux, sum(auxcond) * timestep)
-    mainfuel = fuel_of_load(eng_load[maincond], pmain, sum(maincond) * timestep)
+    auxhrs[label] = sum(auxcond) / len(auxcond) * (day_hrs + night_hrs)
+    mainhrs[label] = sum(maincond) / len(maincond) * (day_hrs + night_hrs)
+    auxfuel = fuel_of_load(eng_load[auxcond], paux, auxhrs[label])
+    mainfuel = fuel_of_load(eng_load[maincond], pmain, mainhrs[label])
     fuel[label] = mainfuel + auxfuel
-    auxhrs[label] = sum(auxcond) * timestep
-    mainhrs[label] = sum(maincond) * timestep
-    return fuel, auxhrs, mainhrs
+    return fuel, auxhrs, mainhrs, batt_charge, eng_load
 
 
 def battery_load_calculator(load, batt_cap, batt_cutoff=None, docked=None):
@@ -513,9 +516,11 @@ def battery_load_calculator(load, batt_cap, batt_cutoff=None, docked=None):
         # Calculating battery state and fuel consumption ------------
         if docked is not None and docked[ind]:
             eng_load[ind] = 0
-            batt_charge[ind+1] = batt_charge[ind] + charge_rate * timestep
-            if batt_charge[ind + 1] > batt_cap:
-                charging = False
+            if batt_charge[ind] < batt_cap:
+                charging = True
+                batt_charge[ind+1] = batt_charge[ind] + charge_rate * timestep
+                if batt_charge[ind + 1] > batt_cap:
+                    charging = False
         elif load[ind] < batt_cutoff:
             if batt_charge[ind] > 0 and not charging:
                 batt_charge[ind+1] = (batt_charge[ind] - load[ind] * timestep)
