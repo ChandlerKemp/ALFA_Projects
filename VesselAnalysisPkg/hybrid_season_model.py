@@ -328,9 +328,10 @@ def fuel_of_load(load, bsfc_coeffs, hrs):
     :param hrs: total hours put on the engine
     :return fuel: total gallons consumed in the given time
     """
-    counts, bins = np.histogram(load)
+    counts, bins = np.histogram(load, bins=100)
     counts = counts / sum(counts)
     bincenters = (bins[:-1] + bins[1:])/2
+    print(bins[-3:])
     fuel = sum(polyval(bincenters, bsfc_coeffs) * counts) * hrs
     return fuel
 
@@ -411,7 +412,6 @@ def season_fuel(vessel, battery, pmain_in, paux_in, aux_cutoff, start, end, load
 
     # Define night and day conditions ---------------------------
     daycond, nightcond, day_hrs, night_hrs = night_day(vessel, cond)
-
     # Define times when vessel was at the dock -------------------------------------------------------------------------
     docked = vessel_docked(vessel, cond)
 
