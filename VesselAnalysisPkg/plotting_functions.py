@@ -59,13 +59,21 @@ def plot_prep():
         'size'   : 14}
     matplotlib.rc('font', **font)
 
-def plot_fixer(ax=None):
+def plot_fixer(ax=None, fsize=14):
     if ax is None:
-        ax = plt.gca()
-    ax.tick_params(axis='both', which='major', labelsize=14)
-    lw = 4
-    for ln in ax.lines:
-        ln.set_linewidth(lw)
+        fig = plt.gcf()
+        ax_list = fig.get_axes()
+    for ax in ax_list:
+        ax.tick_params(axis='both', which='major', labelsize=fsize)
+        lw = 4
+        for ln in ax.lines:
+            ln.set_linewidth(lw)
+        for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +\
+                ax.get_xticklabels() + ax.get_yticklabels()):
+            item.set_fontsize(fsize)
+        ax.legend_.prop.set_size(fsize)
+        ax.xaxis.label.set_fontweight('bold')
+        ax.yaxis.label.set_fontweight('bold')
     plt.tight_layout()
 
 def hist_plot(data, bins=None, xlabel=None, ylabel=None):
@@ -98,6 +106,6 @@ def hist_plot(data, bins=None, xlabel=None, ylabel=None):
     if ylabel is None:
         ylabel = 'Fraction of time in bin'
     plt.ylabel(ylabel, fontsize=14, fontweight='bold')
-    plt.xlabel(xlabel,fontsize=14, fontweight='bold')
+    plt.xlabel(xlabel, fontsize=14, fontweight='bold')
     plot_fixer()
     return counts, bins, hndl

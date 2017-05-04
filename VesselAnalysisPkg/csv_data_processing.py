@@ -102,7 +102,10 @@ class CSV_General:
                     if dl == 'date_time' or dl == 'date' or dl == 'time':
                         temp.append(data_tools.str_to_datetime(row[kwargs[data_label]]))
                     else:
-                        temp.append(float(row[kwargs[data_label]]))
+                        try:
+                            temp.append(float(row[kwargs[data_label]]))
+                        except ValueError:
+                            temp.append(row[kwargs[data_label]])
                 setattr(self, data_label, np.array(temp))
 
     def date_time_comb(self, dateattr='date', timeattr='time'):
